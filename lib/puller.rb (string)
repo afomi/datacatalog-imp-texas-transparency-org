@@ -1,10 +1,14 @@
+
 class Puller
+  
+  gem 'kronos', '>= 0.1.6'
+  require 'kronos'
 
   U = DataCatalog::ImporterFramework::Utility
   I = DataCatalog::ImporterFramework
   
   FETCH_DELAY = 0.3
-  FORCE_FETCH = true
+  FORCE_FETCH = false
   
   def initialize(handler)
     @handler = handler
@@ -37,8 +41,8 @@ class Puller
   
   def run
      @common = {
-      :catalog_name => "texastransparency.org",
-      :catalog_url  => "http://texastransparency.org",
+      'catalog_name' => "Texas",
+      'catalog_url'  => "http://texastransparency.org",
     }
     
     process_data
@@ -48,13 +52,12 @@ class Puller
   
   def process_data
     source_index_page = get_source_index_page(@source_index_uri)
-    rows = get_source_rows(source_index_page)
+    rows              = get_source_rows(source_index_page)
+    shaped_rows       = get_data(rows)
     
-    # grabs org @ source data from detail pages
-    shaped_rows = get_data(rows)
+    U.write_yaml(@cache_source_index_data, shaped_rows) # writes to /sources/index.yml for easy viewing later
     puts "Pull Sources Complete"
     
-    # processes org & source data into .yml's for rake push & pull
     loop_sources(shaped_rows)
     loop_orgs(shaped_rows)
   end
@@ -75,12 +78,14 @@ class Puller
 
   # Parse each row found in the index file
   def get_data(rows)
-    all_data = []
+    all_data   = []
     
     rows.each do |row|
-      url = "https://ourcpa.cpa.state.tx.us" + U.single_line_clean(row.css(".dataCellName a")[0]['href'])
+      url          = "https://ourcpa.cpa.state.tx.us" + U.single_line_clean(row.css(".dataCellName a")[0]['href'])
+      #description  = U.multi_line_clean(row.css(".dataCellMetaData span")[0].content)
       
-      # grab the detail page for more information on the source & orgs
+      # grab the detail page for more information on the source
+      # and organization data
       # because there is no page dedicated to org data
       detail_page  = get_detail_page(url)
 
@@ -88,8 +93,8 @@ class Puller
       # because it has <p>'s
       detail_page.css("#rightCol").remove
       
-      # grab page data to a structured hash
       # assumes a 1:1 ratio <h3><p> pattern
+      # grab to a structured hash
       hash = {}
       h3 = detail_page.css("h3")
       p  = detail_page.css("p")      
@@ -97,14 +102,21 @@ class Puller
       
       # Grab data from the page
       scraped_data = {
-        :title             => U.single_line_clean(row.css(".dataCellName")[0].content),
-        :documentation_url => "https://ourcpa.cpa.state.tx.us" + row.css(".dataCellDataLayout a")[0]['href'],
-        :url               => url,
-        :name              => hash['submitting agency']  
+        'title'             => U.single_line_clean(row.css(".dataCellName")[0].content),
+        #:description       => U.multi_line_clean(row.css("td")[0].css("span")[0].content),
+        'documentation_url' => "https://ourcpa.cpa.state.tx.us" + row.css(".dataCellDataLayout a")[0]['href'],
+        'url'               => url,
+        'downloads'         => [{
+          'url'    => U.single_line_clean("https://ourcpa.cpa.state.tx.us" + row.css("a")[0]['href']),
+        'format' => hash["file type"],
+          }],
+        'name'              => hash['submitting agency']  
       }
       
       hash.merge!(scraped_data)
       hash.merge!(@common)
+      
+      #raise hash.inspect
       
       all_data << hash
     end
@@ -117,42 +129,37 @@ class Puller
     U.parse_html_from_file_or_uri(uri, filename, :force_fetch => FORCE_FETCH)
   end
   
-  
   protected
+
+  # == Detail Page Related ==
   
   def loop_sources(data)
-
+    
     data.each do |row|
       @source_metadata = {
-        :title             => row[:title],
-        :description       => row[:description],
-        :source_type       => "dataset",
-        :documentation_url => row[:documentation_url],
-        :url               => row[:url],
-        :released          => row[:original_release_date],
-        :organization      => {
-          :name => row[:name],
-          },
-        :frequency         => row['update frequency'].downcase,
-        :downloads         => [
-          {
-            :url    => row[:url],
-            :format => row['file type'],
-            :size   => row['file size'],
-          }
-        ],
-        :custom            => {},
-        :license           => "public domain",
-        :license_url       => "",
-        #:period_end        => "",
-        #:period_start      => "",
-        :raw               => {}
-      }
+                'title'             => row['title'],
+                'description'       => row['description'],
+                'source_type'       => "dataset",
+                'documentation_url' => row['documentation_url'],
+                'url'               => row['url'],
+                'released'          => Kronos.parse(row["original release date"]),
+                'organization'      => {
+                  'name' => row["name"],
+                  },
+                'frequency'         => row["update frequency"].downcase,
+                'downloads'         => row['downloads'],
+                'custom'            => {},
+                'license'           => "public domain",
+                'license_url'       => "",
+                #:period_end        => "",
+                #:period_start      => "",
+                'raw'               => {}
+              }
     
       @source_metadata.merge!(@common)
       @handler.source(@source_metadata)
     end
-
+    
   end
   
   def loop_orgs(data)
@@ -160,22 +167,29 @@ class Puller
     
     data.each do |row|
       hash = {
-            :name         => row[:name],
-            :acronym      => "",
-            :org_type     => "governmental",
-            :description  => "",
-            :url          => row['submitting agency url'],
-            :organization => {:name => "Texas"},
+            'name'         => row['name'],   
             # :names        => "",
+            'acronym'      => "",
+            'org_type'     => "governmental",
+            'description'  => "",
+            # :parent_id    => "",
+            # :slug         => "",
+            'url'          => row['submitting agency url'],
+            # :home_url     => "http://www.texastransparency.org",
+            'organization' => {:name => "Texas"},
+            'license'     => "public domain",
+            # :interest     => "",
+            # :top_level    => "",
             # :custom       => "",
             # :raw          => "",
+            # :user_id      => "",
       }
       hash.merge!(@common)
       
       shaped_rows << hash
     end
     
-    # process uniques (all organizations are Texas)
+    # unique, because the organizations are all Texas
     shaped_rows.uniq.each do |org|
       @handler.organization(org)
     end
