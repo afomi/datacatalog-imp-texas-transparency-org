@@ -100,7 +100,8 @@ class Puller
         :title             => U.single_line_clean(row.css(".dataCellName")[0].content),
         :documentation_url => "https://ourcpa.cpa.state.tx.us" + row.css(".dataCellDataLayout a")[0]['href'],
         :url               => url,
-        :name              => hash['submitting agency']  
+        :name              => hash['submitting agency'],
+        :description       => U.multi_line_clean(row.css('.dataCellMetaData span')[0].content)
       }
       
       hash.merge!(scraped_data)
